@@ -287,7 +287,10 @@ async def update_all_sentiment(request: Request):
 @router.get("/get_sentiment",
     response_model=mod.TimeSeriesData, 
     summary="Provides sentiment by date",
-    description="Provides sentiment by date. Sentiment score is aggregated based on specification. Please input either sum/average/positive_count/negative_count/total_count using query: aggregate= . Specify date_only=True so that the aggregation is by date and not the exact time.",
+    description="""Provides sentiment by date. Sentiment score is aggregated based on specification. 
+    Please input either sum/average/positive_count/negative_count/total_count using query: aggregate= . 
+    Specify date_only=True so that the aggregation is by date and not the exact time.
+    Specify filter_column= and filter_value= to filter data by, ensure that column is written in proper casing. Value is not case sensitive""",
     response_description="Provides sentiment by date given type of aggregation",
     responses={
         200: {
@@ -316,10 +319,18 @@ async def update_all_sentiment(request: Request):
                 }
             },
         },
+        422: {
+            "description": "Filter value not specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Filter value not specified"}
+                }
+            },
+        },
     },
 )
-async def get_sentiment(request: Request, aggregate: str, date_only: bool = False, disruption_type: str = None) -> mod.TimeSeriesData:
-    allowed_params = ["aggregate", "date_only", "disruption_type"]
+async def get_sentiment(request: Request, aggregate: str, date_only: bool = False, filter_column:str = None , filter_value:str = None) -> mod.TimeSeriesData:
+    allowed_params = ["aggregate", "date_only", "filter_column", "filter_value"]
     extra_params = [key for key in request.query_params if key not in allowed_params]
 
     if extra_params:
@@ -329,14 +340,18 @@ async def get_sentiment(request: Request, aggregate: str, date_only: bool = Fals
     if aggregate not in valid_methods:
         raise HTTPException(status_code=400, detail="Invalid aggregation method specified")
 
+    if filter_column != None:
+        if filter_value == None:
+            raise HTTPException(status_code=422, detail="Filter value not specified")
+
     db = request.app.news
-    if disruption_type == None:
+    if filter_column == None:
         documents = db.find({"sentiment": {"$exists": True}})
     else:
-        regex = {'$regex': disruption_type, '$options': 'i'}
+        regex = {'$regex': filter_value, '$options': 'i'}
         documents = db.find({
-            "sentiment": {"$exists": True},
-            "disruption type": regex
+            "ner": {"$exists": True},
+            filter_column: regex
         })
     tracker_averaging = {}
     sentiment_per_date = {}
@@ -488,8 +503,8 @@ async def update_all_ner(request: Request):
     if extra_params:
         raise HTTPException(status_code=404, detail="Unexpected query parameter")
     try:
-        document = db.find({"ner": {"$exists": False}}) 
-        to_modify= db.count_documents({"ner": {"$exists": False}})
+        document = db.find({"ner": {"$exists": True}}) 
+        to_modify= db.count_documents({"ner": {"$exists": True}})
         modified = 0
         if to_modify==0:
             return {'update': False}
@@ -518,7 +533,9 @@ async def update_all_ner(request: Request):
 @router.get("/get_ner",
     response_model=mod.TimeSeriesData_Dict, 
     summary="Provides sentiment by date",
-    description="Provides sentiment by date. Sentiment score is aggregated based on specification. Please input either sum/average/positive_count/negative_count/total_count using query: aggregate= . Specify date_only=True so that the aggregation is by date and not the exact time.",
+    description="""Provides sentiment by date. Sentiment score is aggregated based on specification. 
+    Specify date_only=True so that the aggregation is by date and not the exact time.
+    Specify filter_column= and filter_value= to filter data by, ensure that column is written in proper casing. Value is not case sensitive""",
     response_description="Provides sentiment by date given type of aggregation",
     responses={
         200: {
@@ -539,23 +556,35 @@ async def update_all_ner(request: Request):
                 }
             },
         },
+        422: {
+            "description": "Filter value not specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Filter value not specified"}
+                }
+            },
+        },
     },
 )
-async def get_ner(request: Request, date_only: bool = False, disruption_type:str = None) -> mod.TimeSeriesData_Dict:
-    allowed_params = ["date_only", "disruption_type"]
+async def get_ner(request: Request, date_only: bool = False, filter_column:str = None , filter_value:str = None) -> mod.TimeSeriesData_Dict:
+    allowed_params = ["date_only", "filter_column", "filter_value"]
     extra_params = [key for key in request.query_params if key not in allowed_params]
 
     if extra_params:
         raise HTTPException(status_code=404, detail="Unexpected query parameter")
 
+    if filter_column != None:
+        if filter_value == None:
+            raise HTTPException(status_code=422, detail="Filter value not specified")
+
     db = request.app.news
-    if disruption_type == None:
+    if filter_column == None:
         documents = db.find({"ner": {"$exists": True}})
     else:
-        regex = {'$regex': disruption_type, '$options': 'i'}
+        regex = {'$regex': filter_value, '$options': 'i'}
         documents = db.find({
             "ner": {"$exists": True},
-            "disruption type": regex
+            filter_column: regex
         })
 
     ner_per_date: Dict[str, Dict[str, list]] = {}
@@ -575,8 +604,7 @@ async def get_ner(request: Request, date_only: bool = False, disruption_type:str
                 if key not in ner_per_date[date_key]:
                     ner_per_date[date_key][key] = []
                 for val in value:
-                    if val not in ner_per_date[date_key][key]:
-                        ner_per_date[date_key][key].append(val)
+                    ner_per_date[date_key][key].append(val)
 
     return mod.TimeSeriesData_Dict(data=ner_per_date)
 
