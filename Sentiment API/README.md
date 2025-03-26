@@ -6,17 +6,7 @@
 
 ## 🚀 APIs
 
-- **Disruption Tracking**: Monitor events categorized by disruption types like Cyber Attacks, Port Disruptions, Supply Shortages, etc.
-- **Severity Analysis**: Visualize the severity levels (Low, Medium, High) across different time ranges.
-- **Time-Based Filtering**: Filter and display data for:
-  - **Last Week**
-  - **Last Month**
-  - **All Time**
-- **Keyword Analysis**: Perform analysis to detect top keywords from disruption-related articles.
-- **Interactive Charts**: View data as **Donut Charts** and **Tree Maps** for better insights.
-- **Map Visualization**: Display event locations on Google Maps.
-- **Responsive UI**: A clean and interactive frontend for ease of use.
-
+refer to `http://localhost:8000\docs`
 ---
 
 ## 🛠️ Technologies Used

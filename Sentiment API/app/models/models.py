@@ -36,6 +36,9 @@ class TimeSeriesData(BaseModel):
 class TimeSeriesData_Dict(BaseModel):
     data: Dict[str, Dict[str, List[str]]]= Field(default_factory=dict)
 
-
-# class Sentiment_ItemWithId(Sentiment_Item):
-#     id: str
+class Topic_Modelling_pyLDAvis(BaseModel):
+    score:  Dict[str, float]
+    data: Dict[str, str] = Field(
+        ..., 
+        description="The relevant terms related to each topic."
+    )

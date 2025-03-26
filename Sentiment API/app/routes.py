@@ -4,6 +4,10 @@ import app.utils as utils
 import app.models.models as mod
 from bson import ObjectId
 from datetime import datetime
+from fastapi.responses import FileResponse
+import os
+import pickle 
+import pyLDAvis
 
 router = APIRouter()
 
@@ -608,4 +612,103 @@ async def get_ner(request: Request, date_only: bool = False, filter_column:str =
 
     return mod.TimeSeriesData_Dict(data=ner_per_date)
 
-#ACTUAL TEXT
+
+@router.get("/get_topic_model_pyLDAvis",
+    response_model=mod.Topic_Modelling_pyLDAvis, 
+    summary="Provides topic modelling data from pyLDAvis",
+    description="""Provides the top few relevant terms associated with each grouped topic. Provide number of topics to group be with num_topics= , provide number of relevant terms to include with relevant_terms= (Default is 10)""",
+    response_description="Provides the relevant terms associated with each grouped topic",
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "data": {
+                        "2024-12-17T00:00:00": 2, 
+                        "2024-12-18T00:00:00": 1,
+                    }
+                }
+            },
+        },
+        404: {
+            "description": "Invalid query specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Unexpected query parameter"}
+                }
+            },
+        },
+        422: {
+            "description": "Filter value not specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Filter value not specified"}
+                }
+            },
+        },
+    },
+)
+async def get_pyLDAvis_data(request: Request, num_topics: int = None, relevant_terms: int = 10) -> mod.Topic_Modelling_pyLDAvis:
+    allowed_params = ["num_topics", "relevant_terms"]
+    extra_params = [key for key in request.query_params if key not in allowed_params]
+
+    if extra_params:
+        raise HTTPException(status_code=404, detail="Unexpected query parameter")
+
+    if num_topics == None:
+        raise HTTPException(status_code=422, detail="Number of topics value not specified")
+
+    db = request.app.news
+    documents = db.find()
+
+    topics_data: Dict[str, str] = {}
+    text = []
+    for doc in documents:
+        text.append(doc.get("actual_text"))
+    score_data, topics_data = utils.generate_pyLDAvis_topics(text, num_topics, relevant_terms)
+        
+    return mod.Topic_Modelling_pyLDAvis(score= score_data, data=topics_data)
+
+
+@router.get("/get_topic_model_pyLDAvis/visual",
+    summary="Provides topic modelling graphics",
+    description="""Provides the pyLDAvis visualisations as a downloadable file. Provide path to download if a volume is mounted with docker container (Otherwise default downloaded to download file)""",
+    response_description="NA",
+    responses={
+        404: {
+            "description": "Invalid query specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Unexpected query parameter"}
+                }
+            },
+        },
+        422: {
+            "description": "Filter value not specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Filter value not specified"}
+                }
+            },
+        },
+    },
+)
+async def get_pyLDAvis_visual(request: Request, download_path:str = None,  num_topics: int = None) -> mod.Topic_Modelling_pyLDAvis:
+    allowed_params = ["download_path", "num_topics"]
+    extra_params = [key for key in request.query_params if key not in allowed_params]
+
+    if extra_params:
+        raise HTTPException(status_code=404, detail="Unexpected query parameter")
+    
+    if num_topics == None:
+        raise HTTPException(status_code=422, detail="Number of topics value not specified")
+
+    LDAvis_data_filepath = os.path.join('./LDA_visual_Latest/ldavis_prepared_'+str(num_topics))
+
+    with open(LDAvis_data_filepath, 'rb') as f:
+        vis_data = pickle.load(f)
+    
+    html_path = "lda_vis.html"
+    pyLDAvis.save_html(vis_data, html_path)
+    
+    return FileResponse(html_path, media_type='text/html', filename="lda_vis.html")
+
