@@ -4,6 +4,10 @@ import app.utils as utils
 import app.models.models as mod
 from bson import ObjectId
 from datetime import datetime
+from fastapi.responses import FileResponse
+import os
+import pickle 
+import pyLDAvis
 
 router = APIRouter()
 
@@ -287,7 +291,10 @@ async def update_all_sentiment(request: Request):
 @router.get("/get_sentiment",
     response_model=mod.TimeSeriesData, 
     summary="Provides sentiment by date",
-    description="Provides sentiment by date. Sentiment score is aggregated based on specification. Please input either sum/average/positive_count/negative_count/total_count using query: aggregate= . Specify date_only=True so that the aggregation is by date and not the exact time.",
+    description="""Provides sentiment by date. Sentiment score is aggregated based on specification. 
+    Please input either sum/average/positive_count/negative_count/total_count using query: aggregate= . 
+    Specify date_only=True so that the aggregation is by date and not the exact time.
+    Specify filter_column= and filter_value= to filter data by, ensure that column is written in proper casing. Value is not case sensitive""",
     response_description="Provides sentiment by date given type of aggregation",
     responses={
         200: {
@@ -316,10 +323,18 @@ async def update_all_sentiment(request: Request):
                 }
             },
         },
+        422: {
+            "description": "Filter value not specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Filter value not specified"}
+                }
+            },
+        },
     },
 )
-async def get_sentiment(request: Request, aggregate: str, date_only: bool = False, disruption_type: str = None) -> mod.TimeSeriesData:
-    allowed_params = ["aggregate", "date_only", "disruption_type"]
+async def get_sentiment(request: Request, aggregate: str, date_only: bool = False, filter_column:str = None , filter_value:str = None) -> mod.TimeSeriesData:
+    allowed_params = ["aggregate", "date_only", "filter_column", "filter_value"]
     extra_params = [key for key in request.query_params if key not in allowed_params]
 
     if extra_params:
@@ -329,14 +344,18 @@ async def get_sentiment(request: Request, aggregate: str, date_only: bool = Fals
     if aggregate not in valid_methods:
         raise HTTPException(status_code=400, detail="Invalid aggregation method specified")
 
+    if filter_column != None:
+        if filter_value == None:
+            raise HTTPException(status_code=422, detail="Filter value not specified")
+
     db = request.app.news
-    if disruption_type == None:
+    if filter_column == None:
         documents = db.find({"sentiment": {"$exists": True}})
     else:
-        regex = {'$regex': disruption_type, '$options': 'i'}
+        regex = {'$regex': filter_value, '$options': 'i'}
         documents = db.find({
-            "sentiment": {"$exists": True},
-            "disruption type": regex
+            "ner": {"$exists": True},
+            filter_column: regex
         })
     tracker_averaging = {}
     sentiment_per_date = {}
@@ -488,8 +507,8 @@ async def update_all_ner(request: Request):
     if extra_params:
         raise HTTPException(status_code=404, detail="Unexpected query parameter")
     try:
-        document = db.find({"ner": {"$exists": False}}) 
-        to_modify= db.count_documents({"ner": {"$exists": False}})
+        document = db.find({"ner": {"$exists": True}}) 
+        to_modify= db.count_documents({"ner": {"$exists": True}})
         modified = 0
         if to_modify==0:
             return {'update': False}
@@ -518,7 +537,9 @@ async def update_all_ner(request: Request):
 @router.get("/get_ner",
     response_model=mod.TimeSeriesData_Dict, 
     summary="Provides sentiment by date",
-    description="Provides sentiment by date. Sentiment score is aggregated based on specification. Please input either sum/average/positive_count/negative_count/total_count using query: aggregate= . Specify date_only=True so that the aggregation is by date and not the exact time.",
+    description="""Provides sentiment by date. Sentiment score is aggregated based on specification. 
+    Specify date_only=True so that the aggregation is by date and not the exact time.
+    Specify filter_column= and filter_value= to filter data by, ensure that column is written in proper casing. Value is not case sensitive""",
     response_description="Provides sentiment by date given type of aggregation",
     responses={
         200: {
@@ -539,23 +560,35 @@ async def update_all_ner(request: Request):
                 }
             },
         },
+        422: {
+            "description": "Filter value not specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Filter value not specified"}
+                }
+            },
+        },
     },
 )
-async def get_ner(request: Request, date_only: bool = False, disruption_type:str = None) -> mod.TimeSeriesData_Dict:
-    allowed_params = ["date_only", "disruption_type"]
+async def get_ner(request: Request, date_only: bool = False, filter_column:str = None , filter_value:str = None) -> mod.TimeSeriesData_Dict:
+    allowed_params = ["date_only", "filter_column", "filter_value"]
     extra_params = [key for key in request.query_params if key not in allowed_params]
 
     if extra_params:
         raise HTTPException(status_code=404, detail="Unexpected query parameter")
 
+    if filter_column != None:
+        if filter_value == None:
+            raise HTTPException(status_code=422, detail="Filter value not specified")
+
     db = request.app.news
-    if disruption_type == None:
+    if filter_column == None:
         documents = db.find({"ner": {"$exists": True}})
     else:
-        regex = {'$regex': disruption_type, '$options': 'i'}
+        regex = {'$regex': filter_value, '$options': 'i'}
         documents = db.find({
             "ner": {"$exists": True},
-            "disruption type": regex
+            filter_column: regex
         })
 
     ner_per_date: Dict[str, Dict[str, list]] = {}
@@ -575,9 +608,107 @@ async def get_ner(request: Request, date_only: bool = False, disruption_type:str
                 if key not in ner_per_date[date_key]:
                     ner_per_date[date_key][key] = []
                 for val in value:
-                    if val not in ner_per_date[date_key][key]:
-                        ner_per_date[date_key][key].append(val)
+                    ner_per_date[date_key][key].append(val)
 
     return mod.TimeSeriesData_Dict(data=ner_per_date)
 
-#ACTUAL TEXT
+
+@router.get("/get_topic_model_pyLDAvis",
+    response_model=mod.Topic_Modelling_pyLDAvis, 
+    summary="Provides topic modelling data from pyLDAvis",
+    description="""Provides the top few relevant terms associated with each grouped topic. Provide number of topics to group be with num_topics= , provide number of relevant terms to include with relevant_terms= (Default is 10)""",
+    response_description="Provides the relevant terms associated with each grouped topic",
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "data": {
+                        "2024-12-17T00:00:00": 2, 
+                        "2024-12-18T00:00:00": 1,
+                    }
+                }
+            },
+        },
+        404: {
+            "description": "Invalid query specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Unexpected query parameter"}
+                }
+            },
+        },
+        422: {
+            "description": "Filter value not specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Filter value not specified"}
+                }
+            },
+        },
+    },
+)
+async def get_pyLDAvis_data(request: Request, num_topics: int = None, relevant_terms: int = 10) -> mod.Topic_Modelling_pyLDAvis:
+    allowed_params = ["num_topics", "relevant_terms"]
+    extra_params = [key for key in request.query_params if key not in allowed_params]
+
+    if extra_params:
+        raise HTTPException(status_code=404, detail="Unexpected query parameter")
+
+    if num_topics == None:
+        raise HTTPException(status_code=422, detail="Number of topics value not specified")
+
+    db = request.app.news
+    documents = db.find()
+
+    topics_data: Dict[str, str] = {}
+    text = []
+    for doc in documents:
+        text.append(doc.get("actual_text"))
+    score_data, topics_data = utils.generate_pyLDAvis_topics(text, num_topics, relevant_terms)
+        
+    return mod.Topic_Modelling_pyLDAvis(score= score_data, data=topics_data)
+
+
+@router.get("/get_topic_model_pyLDAvis/visual",
+    summary="Provides topic modelling graphics",
+    description="""Provides the pyLDAvis visualisations as a downloadable file. Provide path to download if a volume is mounted with docker container (Otherwise default downloaded to download file)""",
+    response_description="NA",
+    responses={
+        404: {
+            "description": "Invalid query specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Unexpected query parameter"}
+                }
+            },
+        },
+        422: {
+            "description": "Filter value not specified",
+            "content": {
+                "application/json": {
+                    "example": {"message": "Filter value not specified"}
+                }
+            },
+        },
+    },
+)
+async def get_pyLDAvis_visual(request: Request, download_path:str = None,  num_topics: int = None) -> mod.Topic_Modelling_pyLDAvis:
+    allowed_params = ["download_path", "num_topics"]
+    extra_params = [key for key in request.query_params if key not in allowed_params]
+
+    if extra_params:
+        raise HTTPException(status_code=404, detail="Unexpected query parameter")
+    
+    if num_topics == None:
+        raise HTTPException(status_code=422, detail="Number of topics value not specified")
+
+    LDAvis_data_filepath = os.path.join('./LDA_visual_Latest/ldavis_prepared_'+str(num_topics))
+
+    with open(LDAvis_data_filepath, 'rb') as f:
+        vis_data = pickle.load(f)
+    
+    html_path = "lda_vis.html"
+    pyLDAvis.save_html(vis_data, html_path)
+    
+    return FileResponse(html_path, media_type='text/html', filename="lda_vis.html")
+
